@@ -1,6 +1,6 @@
 /*
     Frida Xposed Bridge
-    by Monkeylord
+    by Monkeylord, fixed by 327135569
     License: MIT
     
     Load Xposed Bridge&Modules though Frida.
@@ -8,406 +8,407 @@
     原理：通过Frida加载XposedBridge.jar，同时通过Frida Java Hook来实现Xposed API。随后模拟Xposed初始化，并加载插件，然后再模拟应用启动。
 */
 
+
 var typeTranslation = {
-    "Z":"java.lang.Boolean",
-    "B":"java.lang.Byte",
-    "S":"java.lang.Short",
-    "I":"java.lang.Integer",
-    "J":"java.lang.Long",
-    "F":"java.lang.Float",
-    "D":"java.lang.Double"
+    "Z": "java.lang.Boolean",
+    "B": "java.lang.Byte",
+    "S": "java.lang.Short",
+    "I": "java.lang.Integer",
+    "J": "java.lang.Long",
+    "F": "java.lang.Float",
+    "D": "java.lang.Double"
 }
 
 var XposedClassFactory = null
+var appClassFactory = null
+var pluginClassFactory = null
 
-function implementXposedAPI(){
+function mylog() {
+    // console.log.apply(console, arguments)
+}
+
+function implementXposedAPI() {
     // Implement ZygoteService API
     var ZygoteService = XposedClassFactory.use("de.robv.android.xposed.services.ZygoteService")
-    
-    ZygoteService.checkFileAccess.implementation = function(){
-        console.log("[API Call] checkFileAccess", " filename:", arguments[0])
+
+    ZygoteService.checkFileAccess.implementation = function () {
+        mylog("[API Call] checkFileAccess", " filename:", arguments[0])
         return true
     }
-    
-    ZygoteService.statFile.implementation = function(){
-        console.log("[API Call] statFile", " filename:", arguments[0])
+
+    ZygoteService.statFile.implementation = function () {
+        mylog("[API Call] statFile", " filename:", arguments[0])
         return null
     }
-    
-    ZygoteService.readFile.overload('java.lang.String').implementation = function(){
-        console.log("[API Call] readFile", " filename:", arguments[0])
+
+    ZygoteService.readFile.overload('java.lang.String').implementation = function () {
+        mylog("[API Call] readFile", " filename:", arguments[0])
         return null
     }
-    
+
     // Implement XposedBridge API
-    var XposedBridge =  XposedClassFactory.use("de.robv.android.xposed.XposedBridge")
+    var XposedBridge = XposedClassFactory.use("de.robv.android.xposed.XposedBridge")
     XposedBridge.runtime.value = 2  // Art
-    XposedBridge.hadInitErrors.implementation=function(){
-        console.log("[API Call] hadInitErrors")
+    XposedBridge.hadInitErrors.implementation = function () {
+        mylog("[API Call] hadInitErrors")
         return false
     }
-    
-    XposedBridge.getStartClassName.implementation=function(){
-        console.log("[API Call] getStartClassName")
+
+    XposedBridge.getStartClassName.implementation = function () {
+        mylog("[API Call] getStartClassName")
         // TODO
         return ""
     }
-    
-    XposedBridge.getRuntime.implementation=function(){
-        console.log("[API Call] getRuntime")
+
+    XposedBridge.getRuntime.implementation = function () {
+        mylog("[API Call] getRuntime")
         // 1 = Dalvik, 2 = Art
         return 2
     }
-    
-    XposedBridge.startsSystemServer.implementation=function(){
-        console.log("[API Call] startsSystemServer")
+
+    XposedBridge.startsSystemServer.implementation = function () {
+        mylog("[API Call] startsSystemServer")
         // TODO
         return false
     }
-    
-    XposedBridge.getXposedVersion.implementation=function(){
-        console.log("[API Call] getXposedVersion")
+
+    XposedBridge.getXposedVersion.implementation = function () {
+        mylog("[API Call] getXposedVersion")
         return 82
     }
-    
-    XposedBridge.initXResourcesNative.implementation=function(){
-        console.log("[API Call] initXResourcesNative")
+
+    XposedBridge.initXResourcesNative.implementation = function () {
+        mylog("[API Call] initXResourcesNative")
         // Disable Resource Hook
         // TODO: implement Resource Hook
         return false
     }
-    
-    XposedBridge.hookMethodNative.implementation=function(javaReflectedMethod, jobject, jint, javaAdditionalInfo){
-        console.log("[API Call] hookMethodNative", javaReflectedMethod.getDeclaringClass().getName(), javaReflectedMethod.getName())
-        
-        // 这里来的，可能是Method，也可能是Constructor
-        // 在7.0里不能直接getClass，用$className替代
-        var refMethod = Java.use(javaReflectedMethod.$className)
-        var method = Java.cast(javaReflectedMethod, refMethod)
-               
-        // 创建GlobalRef，不然再次调用时可能就是野指针了
-        javaReflectedMethod.$h = Java.vm.getEnv().newGlobalRef(javaReflectedMethod.$h)
-        javaAdditionalInfo.$h = Java.vm.getEnv().newGlobalRef(javaAdditionalInfo.$h)
-        
-        
-        // 拿基本信息
-        
+
+    XposedBridge.hookMethodNative.implementation = function (javaReflectedMethod, jobject, jint, javaAdditionalInfo) {
+        mylog("[API Call] hookMethodNative", javaReflectedMethod.getDeclaringClass().getName(), javaReflectedMethod.getName())
+
+        var Method = Java.use(javaReflectedMethod.$className)
+        var method = Java.cast(javaReflectedMethod, Method)
+
+        var AdditionalHookInfo = XposedClassFactory.use('de.robv.android.xposed.XposedBridge$AdditionalHookInfo')
+        var additionalHookInfo = XposedClassFactory.retain(Java.cast(javaAdditionalInfo, AdditionalHookInfo))
+
+        mylog("[API Call] hookMethodNative 1")
+
         // Frida中Method Hook和Constructor Hook方式不同，所以要区分
-        var clazz = method.getDeclaringClass().getName()
-        var mtdname = (javaReflectedMethod.$className=="java.lang.reflect.Constructor")? "$init": method.getName()
-        var overload = method.getParameterTypes().map(function(clz){return clz.getName()})
-        
-        var fridaMethod = Java.use(clazz)[mtdname].overload.apply(Java.use(clazz)[mtdname], overload)
-        
-        fridaMethod.implementation = function(){
-            console.log("handleHookedMethod", javaReflectedMethod.getDeclaringClass().getName(), javaReflectedMethod.getName())
-            var isInstanceMethod = fridaMethod.type == 3    // 3 = Instance Method
-            var thisObject = null
+        var clazz = javaReflectedMethod.getDeclaringClass().getName()
+        var mtdname = (javaReflectedMethod.$className == "java.lang.reflect.Constructor") ? "$init" : javaReflectedMethod.getName()
+        var overload = method.getParameterTypes().map(function (clz) { return clz.getName() })
+
+        mylog("[API Call] hookMethodNative", 2, mtdname, overload)
+
+        var fridaMethod = appClassFactory.use(clazz)[mtdname].overload.apply(appClassFactory.use(clazz)[mtdname], overload)
+        // mylog("[API Call] hookMethodNative", 3, 'hook', fridaMethod._p)
+
+        fridaMethod.implementation = function () {
+            // mylog(Process.getCurrentThreadId(), 'invoked', method.getName(), method.getDeclaringClass().getName())
+
+            let isInstanceMethod = fridaMethod.type == 3    // 3 = Instance Method
+            let thisObject = appClassFactory.use(clazz)
             if (isInstanceMethod)
                 thisObject = this
-            
-            var args = arguments
-            var jarr = Object.keys(arguments).map(function(key){return args[key]})
-            
-            fridaMethod.argumentTypes.forEach(function(type,index){
-                if(type.type != "pointer")jarr[index] = Java.use(typeTranslation[type.name]).valueOf(jarr[index])
-                else{
-                    var env = Java.vm.getEnv()
-                    jarr[index] = Java.classFactory._getType("java.lang.Object").fromJni(type.toJni(jarr[index], env),env, false)
+
+            let retType = fridaMethod.returnType
+            let _jarr = arguments
+            let jarr = Object.keys(arguments).map(function (key) { return _jarr[key] })
+
+            fridaMethod.argumentTypes.forEach(function (type, index) {
+                if (type.type != "pointer") {
+                    jarr[index] = Java.use(typeTranslation[type.name]).valueOf(jarr[index])
+                }
+                else {
+                    let env = Java.vm.getEnv()
+                    jarr[index] = Java.classFactory._getType("java.lang.Object").fromJni(type.toJni(jarr[index], env), env, false)
                 }
             })
-            
-            try{
-                var xposedResult = XposedBridge.handleHookedMethod(javaReflectedMethod, jint, javaAdditionalInfo, thisObject, Java.array("java.lang.Object", jarr))
-                /*
-                    Frida-java在这里有Bug，手动解决数组对象问题
-                */
-                var env = Java.vm.getEnv()
-                var retType = fridaMethod._p[4]
-                var hhmRetType = XposedBridge.handleHookedMethod.overloads[0]._p[4]
-                
-                if(xposedResult==null)return null
-                if(retType.type != "pointer"){
+
+            try {
+                let callbacks = additionalHookInfo.callbacks.value.getSnapshot()
+                if (callbacks.length == 0) {
+                    return fridaMethod.apply(thisObject, arguments)
+                }
+
+                var callbackLength = callbacks.length
+                var MethodHookParam = XposedClassFactory.use('de.robv.android.xposed.XC_MethodHook$MethodHookParam');
+                var MethodHook = XposedClassFactory.use('de.robv.android.xposed.XC_MethodHook');
+                let paramInst = MethodHookParam.$new()
+                paramInst.method.value = null
+                paramInst.thisObject.value = isInstanceMethod ? thisObject : null
+                paramInst.args.value = jarr
+
+                var beforeIdx = 0
+                do {
+                    try {
+                        var cb = Java.cast(callbacks[beforeIdx], MethodHook)
+                        cb.beforeHookedMethod(paramInst)
+                    }
+                    catch (e) {
+                        paramInst.setResult(null);
+                        paramInst.returnEarly.value = false;
+                        continue;
+                    }
+                    if (paramInst.returnEarly.value) {
+                        // skip remaining "before" callbacks and corresponding "after" callbacks
+                        beforeIdx++;
+                        break;
+                    }
+                } while (++beforeIdx < callbackLength)
+
+
+                if (!paramInst.returnEarly.value) {
+                    try {
+                        let javaR = fridaMethod.apply(thisObject, arguments)
+                        if (retType.name == 'V') {
+                        }
+                        else if (retType.type != "pointer") {
+                            javaR = Java.use(typeTranslation[retType.name]).valueOf(javaR)
+                            paramInst.setResult(javaR)
+                        }
+                        else {
+                            let retType = fridaMethod._p[4]
+                            if (typeof javaR == 'string' || Array.isArray(javaR)) {
+                                var f = Java.cast(retType.toJni(javaR, Java.vm.getEnv()), Java.use('java.lang.Object'))
+                                paramInst.setResult(f)
+                            }
+                            else {
+                                paramInst.setResult(javaR)
+                            }
+                        }
+                    }
+                    catch (e) {
+                        console.error('Throw in original method', e.stack)
+                        let r = Java.cast(e, Java.use('java.lang.Object'))
+                        paramInst.setThrowable(r)
+                    }
+                }
+
+                var afterIdx = beforeIdx - 1;
+                do {
+                    var lastResult = paramInst.getResult()
+                    var lastThrowable = paramInst.getThrowable()
+                    try {
+                        var cb = Java.cast(callbacks[afterIdx], MethodHook)
+                        cb.beforeHookedMethod(paramInst)
+                    }
+                    catch (e) {
+                        // reset to last result (ignoring what the unexpectedly exiting callback did)
+                        if (lastThrowable == null) {
+                            paramInst.setResult(lastResult);
+                        }
+                        else {
+                            paramInst.setThrowable(lastThrowable);
+                        }
+                    }
+                }
+                while (--afterIdx >= 0)
+
+
+                let r;
+                if (paramInst.hasThrowable())
+                    throw paramInst.getThrowable();
+                else {
+                    r = paramInst.getResult();
+                }
+
+                if (retType.name === 'V') {
+
+                }
+                else if (retType.type != 'pointer') {
                     var value
-                    var basicObj = Java.cast(xposedResult,Java.use(typeTranslation[retType.name]))
-                    switch(retType.name){
+                    var basicObj = Java.cast(r, Java.use(typeTranslation[retType.name]))
+                    switch (retType.name) {
                         case "Z":
-                            value = basicObj.booleanValue();break;
+                            value = basicObj.booleanValue(); break;
                         case "B":
-                            value = basicObj.byteValue();break;
+                            value = basicObj.byteValue(); break;
                         case "S":
-                            value = basicObj.shortValue();break;
+                            value = basicObj.shortValue(); break;
                         case "I":
-                            value = basicObj.intValue();break;
+                            value = basicObj.intValue(); break;
                         case "J":
-                            value = basicObj.longValue();break;
+                            value = basicObj.longValue(); break;
                         case "F":
-                            value = basicObj.floatValue();break;
+                            value = basicObj.floatValue(); break;
                         case "D":
-                            value = basicObj.doubleValue();break;
+                            value = basicObj.doubleValue(); break;
+
                     }
                     return value
-                }else{
-                    return retType.fromJni(hhmRetType.toJni(xposedResult, env), env, false)
                 }
-            }catch(e){
-                console.log("Exception: ", e)
+                else if (retType.name.indexOf('[') === 0) {
+                    return retType.fromJni(Java.classFactory._getType('java.lang.Object').toJni(r, Java.vm.getEnv()), Java.vm.getEnv(), false)
+                }
+                else {
+                    return r
+                }
+            } catch (e) {
                 throw e
             }
         }
     }
-    
-    XposedBridge.setObjectClassNative.implementation=function(javaObj, javaClazz){
-        console.log("[API Call] setObjectClassNative", javaObj, javaClazz)
+
+    XposedBridge.setObjectClassNative.implementation = function (javaObj, javaClazz) {
+        mylog("[API Call] setObjectClassNative", javaObj, javaClazz)
         Java.cast(javaObj, javaClazz)
     }
-    
-    XposedBridge.dumpObjectNative.implementation=function(){
-        console.log("[API Call] dumpObjectNative")
+
+    XposedBridge.dumpObjectNative.implementation = function () {
+        mylog("[API Call] dumpObjectNative")
         return undefined
     }
-    
-    XposedBridge.cloneToSubclassNative.implementation=function(javaObj, javaClazz){
-        console.log("[API Call] cloneToSubclassNative", javaObj, javaClazz)
+
+    XposedBridge.cloneToSubclassNative.implementation = function (javaObj, javaClazz) {
+        mylog("[API Call] cloneToSubclassNative", javaObj, javaClazz)
         return Java.cast(javaObj, javaClazz)
     }
-    
-    XposedBridge.removeFinalFlagNative.implementation=function(){
-        console.log("[API Call] removeFinalFlagNative")
+
+    XposedBridge.removeFinalFlagNative.implementation = function () {
+        mylog("[API Call] removeFinalFlagNative")
         // TODO: Remove final flag
         // This is used by Resource Hook
         // Reference: https://github.com/frida/frida-java-bridge/blob/master/lib/android.js#L1390
     }
-    
-    XposedBridge.invokeOriginalMethodNative.implementation = function(javaMethod, isResolved, jobjectArray, jclass, javaReceiver, javaArgs){
-        console.log("[API Call] invokeOriginalMethodNative", javaMethod)
-        
-        var refMethod = Java.use(javaMethod.$className)
-        var method = Java.cast(javaMethod, refMethod)
-        var clazz = method.getDeclaringClass().getName()
-        var mtdname = method.getName()
-        var overload = method.getParameterTypes().map(function(clz){return clz.getName()})
-        
-        var fridaMethod = Java.use(clazz)[mtdname].overload.apply(Java.use(clazz)[mtdname], overload)
-        var thisObject = (fridaMethod.type == 3)?Java.cast(javaReceiver, Java.use(clazz)):Java.use(clazz)
-        
-        var jarr = javaArgs
-        // 不知道为什么结尾可能会多一个null，可能是ducktape问题？手动去掉。
-        jarr = jarr.slice(0, javaArgs.length)
-        
-        fridaMethod.argumentTypes.forEach(function(type,index){
-            if(type.type!="pointer"){
-                //console.log("CAST: ",JSON.stringify(Object.keys(jarr[index])))
-                var value
-                var basicObj = Java.cast(jarr[index],Java.use(typeTranslation[type.name]))
-                switch(type.name){
-                    case "Z":
-                        value = basicObj.booleanValue();break;
-                    case "B":
-                        value = basicObj.byteValue();break;
-                    case "S":
-                        value = basicObj.shortValue();break;
-                    case "I":
-                        value = basicObj.intValue();break;
-                    case "J":
-                        value = basicObj.longValue();break;
-                    case "F":
-                        value = basicObj.floatValue();break;
-                    case "D":
-                        value = basicObj.doubleValue();break;
-                }
-                jarr[index]=value
-            }else{
-                var env = Java.vm.getEnv()
-                jarr[index] = type.fromJni(Java.classFactory._getType("java.lang.Object").toJni(jarr[index], env), env, false)
-            }
 
-        })
-        
-        var result = null
-        try{
-            result = fridaMethod.apply(thisObject, jarr)
-            /*
-                这里有Frida的Bug，frida-java-bridge的对象处理中，数组并不被认为是Object，所以不能作为Object返回。
-                因为数组经过了转换，转换的代码在 https://github.com/frida/frida-java-bridge/blob/4aa88501d2c6c871ada1c696816ca6f7f2626d7b/lib/types.js#L396
-                而数组处理需要ArrayType来处理，ObjectType并不兼容它
-                
-                需要手动解决这个问题，构造和析构对象。
-            */
-            var env = Java.vm.getEnv()
-            var retType = fridaMethod._p[4]
-            var iomnRetType = XposedBridge.invokeOriginalMethodNative.overloads[0]._p[4]
-            
-            if(retType.type != "pointer")return Java.use(typeTranslation[retType.name]).valueOf(result)
-                
-            var rawResult = retType.toJni(result, env)
-            var tmpResult = iomnRetType.fromJni(rawResult, env, false)
-            result = tmpResult
-            
-        }catch(e){
-            console.log(e)
-            throw e
-        }
-        return result || null
-    }
-    
-    XposedBridge.closeFilesBeforeForkNative.implementation=function(){
-        console.log("[API Call] closeFilesBeforeForkNative")
+    XposedBridge.closeFilesBeforeForkNative.implementation = function () {
+        mylog("[API Call] closeFilesBeforeForkNative")
         // TODO
         // Useless outside Zygote
     }
-    
-    XposedBridge.reopenFilesAfterForkNative.implementation=function(){
-        console.log("[API Call] reopenFilesAfterForkNative")
+
+    XposedBridge.reopenFilesAfterForkNative.implementation = function () {
+        mylog("[API Call] reopenFilesAfterForkNative")
         // TODO
         // Useless outside Zygote
     }
-    
-    XposedBridge.invalidateCallersNative.implementation=function(){
-        console.log("[API Call] invalidateCallersNative")
+
+    XposedBridge.invalidateCallersNative.implementation = function () {
+        mylog("[API Call] invalidateCallersNative")
         // TODO: 
         // This is used in resource hook
     }
 }
 
-function FrameworkInit(bridgePath, xposedPath){
-    var ActivityThread = Java.use("android.app.ActivityThread")
-    var apkClassloader = ActivityThread.currentActivityThread().peekPackageInfo(ActivityThread.currentApplication().getPackageName(), true).getClassLoader()
+function FrameworkInit(pkgName, bridgePath, xposedPath) {
+    // var ActivityThread = Java.use("android.app.ActivityThread")
+    // var apkClassloader = ActivityThread.currentActivityThread().peekPackageInfo(pkgName, true).getClassLoader()
 
-    console.log("[XposedFridaBridge] Current Application Classloader: ",apkClassloader)
-    
+    // mylog("Current Application Classloader: ", apkClassloader)
+
     // 加载Xposed类
     // Java.openClassFile(bridgePath).load()
-    var app = ActivityThread.currentApplication()
     var DexClassLoader = Java.use("dalvik.system.DexClassLoader")
-    var codeCacheDir = (app.getCodeCacheDir) ? app.getCodeCacheDir().toString() : "/data/data/" + app.getPackageName() + "/code_cache"
-    console.log("[XposedFridaBridge] Code Cache Directory: ", codeCacheDir)
-    var XposedCL = DexClassLoader.$new(bridgePath, codeCacheDir, null, DexClassLoader.getSystemClassLoader());
+
+    var codeCacheDir = "/data/data/" + pkgName + "/code_cache"
+
+    let systemClassLoader = DexClassLoader.getSystemClassLoader()
+    console.log('systemClassLoader', systemClassLoader)
+
+    var XposedCL = DexClassLoader.$new(bridgePath, codeCacheDir, null, systemClassLoader);
+
     XposedClassFactory = Java.ClassFactory.get(XposedCL)
-    console.log("[XposedFridaBridge] Xposed Classloader: ", XposedCL)
 
-    // 实现XposedBridge API
+    mylog("Code Cache Directory: ", codeCacheDir)
+    mylog("Xposed Classloader: ", XposedCL)
+
+    mylog("implementXposedAPI...")
     implementXposedAPI()
-    
-    console.log("[XposedFridaBridge] XposedBridge successfully loaded\n")
-    
-    // 开始处理初始化
-    console.log("[XposedFridaBridge] Initating Xposed Framework")
+    mylog("implementXposedAPI...done")
 
-    // 模拟XposedBridge.main
-    var XposedBridge =  XposedClassFactory.use("de.robv.android.xposed.XposedBridge")
-    // XposedBridge.initXResources()    //initXResource被放弃实现，转而通过对XposedBridge.jar二次打包实现，修改了android.content.res.XResource
+    mylog("Initating Xposed Framework")
+
+    var XposedBridge = XposedClassFactory.use("de.robv.android.xposed.XposedBridge")
+    var SELinuxHelper = XposedClassFactory.use("de.robv.android.xposed.SELinuxHelper")
+    var XposedInit = XposedClassFactory.use("de.robv.android.xposed.XposedInit")
+
+    // initXResource被放弃实现，转而通过对XposedBridge.jar二次打包实现，修改了android.content.res.XResource
+    // XposedBridge.initXResources()    
+
     XposedBridge.XPOSED_BRIDGE_VERSION.value = 82
     XposedBridge.BOOTCLASSLOADER.value = XposedCL
     XposedBridge.isZygote.value = true
-    
-    var XposedInit = XposedClassFactory.use("de.robv.android.xposed.XposedInit")
-    XposedInit.BASE_DIR.value = xposedPath
-    console.log("[XposedFridaBridge] Static Attribute Set")
-    
-    console.log("[XposedFridaBridge] Initating SELinuxHelper")
-    var SELinuxHelper = XposedClassFactory.use("de.robv.android.xposed.SELinuxHelper")
-    SELinuxHelper.initOnce()
-    SELinuxHelper.initForProcess(ActivityThread.currentApplication().getPackageName())
 
-    console.log("[XposedFridaBridge] hookResources")
-    XposedInit.hookResources()
-    console.log("[XposedFridaBridge] initForZygote")
-    XposedInit.initForZygote()
-    console.log("[XposedFridaBridge] Framework Initated\n")
-    
-    console.log("[XposedFridaBridge] Load Modules")
+    XposedInit.BASE_DIR.value = xposedPath
+
+    SELinuxHelper.initOnce()
+    SELinuxHelper.initForProcess(pkgName)
+
+    // mylog("hookResources")
+    // XposedInit.hookResources()
+    // mylog("initForZygote")
+    // XposedInit.initForZygote()
+
+    mylog("Load Modules...")
     XposedInit.loadModules()
-    
-    console.log("[XposedFridaBridge] Xposed Framework Ready\n")
+    mylog("Load Modules...done")
 }
 
-function triggerLoadPackage(){
-    
-    var XposedBridge =  XposedClassFactory.use("de.robv.android.xposed.XposedBridge")
+function triggerLoadPackage(thiz, appBindData, appInfo, pkgName, processName) {
+
+    var XposedBridge = XposedClassFactory.use("de.robv.android.xposed.XposedBridge")
     var XCallback = XposedClassFactory.use("de.robv.android.xposed.callbacks.XCallback")
     var LoadPackageParam = XposedClassFactory.use("de.robv.android.xposed.callbacks.XC_LoadPackage$LoadPackageParam")
-    
-    console.log("[XposedFridaBridge] Preparing LoadPackageParam")
+
+    mylog("Preparing LoadPackageParam...")
     var ActivityThread = Java.use("android.app.ActivityThread")
-    var app = ActivityThread.currentApplication()
     var thread = ActivityThread.currentActivityThread()
-    console.log(" [PackageName]", app.getPackageName())
-    console.log(" [ProcessName]", ActivityThread.currentPackageName())
-    var boundApplication = thread.mBoundApplication.value
-    console.log(" [boundApplication]", boundApplication)
-    var appInfo = boundApplication.appInfo.value
-    console.log(" [AppInfo]", appInfo)
-    //console.log(appInfo.packageName.value)
-    var compatInfo = boundApplication.compatInfo.value
-    console.log(" [compatInfo]", compatInfo)
-    var loadedApk = thread.getPackageInfoNoCheck(appInfo, compatInfo)
-    console.log(" [loadedApk]", loadedApk)
+    mylog(" [ProcessName]", processName)
+    //mylog(appInfo.packageName.value)
+    var loadedApk = thiz.getPackageInfoNoCheck(appInfo, appBindData.compatInfo.value)
+    mylog(" [loadedApk]", loadedApk)
     var classLoader = loadedApk.getClassLoader()
-    console.log(" [classLoader]", classLoader)
-    
+    mylog(" [classLoader]", classLoader)
+
+    appClassFactory = Java.ClassFactory.get(classLoader)
+
     var lpparam = LoadPackageParam.$new(XposedBridge.sLoadedPackageCallbacks.value)
-    lpparam.packageName.value = app.getPackageName()
-    lpparam.processName.value = ActivityThread.currentPackageName()
-    lpparam.classLoader.value = loadedApk.getClassLoader()
+    lpparam.packageName.value = pkgName
+    lpparam.processName.value = processName
+    lpparam.classLoader.value = classLoader
     lpparam.appInfo.value = loadedApk.getApplicationInfo()
     lpparam.isFirstApplication.value = true
-    
-    console.log("[XposedFridaBridge] LoadPackageParam Ready\n")
-    console.log("[XposedFridaBridge] Triggering Modules")
+
+    mylog("Preparing LoadPackageParam...done")
+
+    mylog("Invoke handleLoadPackage...")
     XCallback.callAll(lpparam)
+    mylog("Invoke handleLoadPackage...done")
 }
 
-// 启动
-function startBridge(){
-    Java.performNow(function(){
+function startBridge() {
+    Java.performNow(function () {
         // Java.deoptimizeEverything()
-        console.log("Xposed Frida Bridge\n by Monkeylord\n")
-        
-        console.log("XposedBridge.jar Path:", "/data/local/tmp/XposedBridge.jar")
-        console.log("modules.list Path:", "/data/local/tmp/conf/modules.list")
-        console.log("\n")
-        
-        console.log("[XposedFridaBridge] Start Loading Xposed")
-        
-        // 获取当前应用Application
-        var ActivityThread = Java.use("android.app.ActivityThread")
-        var app = ActivityThread.currentApplication()
-        
-        if(app!=null){
-            // 当前应用已加载，直接加载
-            // 初始化Framework
-            console.log("[XposedFridaBridge] Current Application: ", app.getPackageName())
-            FrameworkInit("/data/local/tmp/XposedBridge.jar", "/data/local/tmp/")
-                
-            // 触发模块启动
-            console.log("[XposedFridaBridge] Triggering Modules Load")
-            triggerLoadPackage()
-            
-            console.log("[XposedFridaBridge] Ready\n")
-        }else{
-            // Spawn方式启动，等待应用加载
-            console.log("[XposedFridaBridge] Application has not initialized, waiting.")
-            ActivityThread.handleBindApplication.implementation = function(appInfo){
-                // 注意：此处和Xposed加载顺序不同，Xposed在handleBindApplication前初始化模块
-                // 但由于目前实现需要其中的currentApplication，便利起见，在之后初始化模块
-                // TODO 使用其他方式替代currentApplication
-                this.handleBindApplication()
-                // 特定位置初始化Framework
-                app = ActivityThread.currentApplication()
-                console.log("[XposedFridaBridge] Current Application: ", app.getPackageName())
-                FrameworkInit("/data/local/tmp/XposedBridge.jar", "/data/local/tmp/")
-                    
-                // 触发模块启动
-                console.log("[XposedFridaBridge] Triggering Modules Load")
-                triggerLoadPackage()
-                
-                console.log("[XposedFridaBridge] Ready\n")
-            }
-        }
-        
 
+        mylog("Hooking handleBindApplication...")
+        var ActivityThread = Java.use("android.app.ActivityThread")
+        ActivityThread.handleBindApplication.implementation = function (appBindData) {
+
+            const ApplicationInfo = Java.use('android.content.pm.ApplicationInfo')
+            const AppBindData = Java.use('android.app.ActivityThread$AppBindData')
+            const ActivityThread = Java.use('android.app.ActivityThread')
+            var activityThread = Java.cast(this, ActivityThread)
+            var abd = Java.cast(appBindData, AppBindData)
+            var appInfo = abd.appInfo.value
+
+            var ai = Java.cast(appInfo, ApplicationInfo)
+            var pkgName = ai.packageName.value
+
+            mylog("Start Init Framework...")
+            FrameworkInit(pkgName, "/data/local/tmp/XposedBridge.jar", "/data/local/tmp/")
+            mylog("Start Init Framework...done")
+
+            mylog("Triggering Modules Load...")
+            triggerLoadPackage(activityThread, appBindData, appInfo, pkgName, abd.processName.value)
+
+            this.handleBindApplication(appBindData)
+        }
+
+        mylog("Hooking handleBindApplication...done")
     })
 }
 
-setTimeout(startBridge, 10)
+startBridge()
