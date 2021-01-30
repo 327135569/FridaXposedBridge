@@ -1,4 +1,15 @@
 # XposedFridaBridge
+
+## fixed by 321735569
+测试中发现在最新版本的 frida 下行为错乱. 具体表现是调用原函数时死循环了, 因为调的不是原函数了, 是被 Hook 过的函数, 所以这么来回调, TMD烦死了. 
+
+研究了一下, 发现是 Frida 对 Android Hook 做了一些修改导致的. 具体参考 frida-java-bridge 自改为使用 inline hook 之后的原函数调用逻辑.
+
+这波修改如下
+1. 改了下日志输出
+1. format 了一下代码, 我用 vscode
+1. 将 hook 时机改到了 handleBindApplication 前
+
 ## 介绍 Introduction
 
 A frida script implement XposedBridge &amp; load xposed modules, without installing xposed framwork.
