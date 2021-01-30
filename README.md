@@ -1,6 +1,6 @@
 # XposedFridaBridge
 
-## fixed by 321735569
+## fixed by 323135569
 测试中发现在最新版本的 frida 下行为错乱. 具体表现是调用原函数时死循环了, 因为调的不是原函数了, 是被 Hook 过的函数, 所以这么来回调, TMD烦死了. 
 
 研究了一下, 发现是 Frida 对 Android Hook 做了一些修改导致的. 具体参考 frida-java-bridge 自改为使用 inline hook 之后的原函数调用逻辑.
@@ -9,6 +9,9 @@
 1. 改了下日志输出
 1. format 了一下代码, 我用 vscode
 1. 将 hook 时机改到了 handleBindApplication 前
+1. 修了这个调原函数死循环的问题
+1. 小范围测试了下没问题, 但是在我一个百来个 Hook, 且 Hook 里逻辑复杂的项目里 ANR. 欢迎发 issue 一起探讨.
+
 
 ## 介绍 Introduction
 
