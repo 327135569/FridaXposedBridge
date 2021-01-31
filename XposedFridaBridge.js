@@ -84,6 +84,10 @@ function implementXposedAPI() {
         return false
     }
 
+    var MethodHookParam = XposedClassFactory.use('de.robv.android.xposed.XC_MethodHook$MethodHookParam');
+    var MethodHook = XposedClassFactory.use('de.robv.android.xposed.XC_MethodHook');
+    var AdditionalHookInfo = XposedClassFactory.use('de.robv.android.xposed.XposedBridge$AdditionalHookInfo')
+
     XposedBridge.hookMethodNative.implementation = function (javaReflectedMethod, jobject, jint, javaAdditionalInfo) {
         mylog("[API Call] hookMethodNative", javaReflectedMethod.getDeclaringClass().getName(), javaReflectedMethod.getName())
 
@@ -134,12 +138,10 @@ function implementXposedAPI() {
                 }
 
                 var callbackLength = callbacks.length
-                var MethodHookParam = XposedClassFactory.use('de.robv.android.xposed.XC_MethodHook$MethodHookParam');
-                var MethodHook = XposedClassFactory.use('de.robv.android.xposed.XC_MethodHook');
-                let paramInst = MethodHookParam.$new()
+                let paramInst = Java.retain(MethodHookParam.$new())
                 paramInst.method.value = null
                 paramInst.thisObject.value = isInstanceMethod ? thisObject : null
-                paramInst.args.value = jarr
+                paramInst.args.value = Java.array('java.lang.Object', jarr)
 
                 var beforeIdx = 0
                 do {
@@ -193,7 +195,7 @@ function implementXposedAPI() {
                     var lastThrowable = paramInst.getThrowable()
                     try {
                         var cb = Java.cast(callbacks[afterIdx], MethodHook)
-                        cb.beforeHookedMethod(paramInst)
+                        cb.afterHookedMethod(paramInst)
                     }
                     catch (e) {
                         // reset to last result (ignoring what the unexpectedly exiting callback did)
